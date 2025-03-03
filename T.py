@@ -1,12 +1,4 @@
-import pandas as pd
-import numpy as np
-import requests
-import streamlit as st
-import time
-from datetime import datetime
 
-# Cache data fetching to avoid redundant API calls
-@st.cache_data(ttl=60)  # Cache data for 60 secondsimport pandas as pd
 import numpy as np
 import requests
 import streamlit as st
