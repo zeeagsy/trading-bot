@@ -5,18 +5,14 @@ import streamlit as st
 import time
 from datetime import datetime
 
-# Free CryptoCompare API Key (Replace with your own if needed)
-API_KEY = "your_free_api_key_here"
-
 # Cache data fetching to avoid redundant API calls
 @st.cache_data(ttl=60)  # Cache data for 60 seconds
 def fetch_data(symbol, interval, limit=100):
-    url = f"https://min-api.cryptocompare.com/data/v2/histominute" if interval == "hourly" else f"https://min-api.cryptocompare.com/data/v2/histoday"
+    url = "https://api.binance.com/api/v3/klines"
     params = {
-        "fsym": symbol.upper(),
-        "tsym": "USD",
-        "limit": limit,
-        "api_key": API_KEY
+        "symbol": symbol.upper() + "USDT",
+        "interval": interval,
+        "limit": limit
     }
     headers = {"User-Agent": "Mozilla/5.0"}
     
@@ -26,13 +22,13 @@ def fetch_data(symbol, interval, limit=100):
         response.raise_for_status()
         data = response.json()
         
-        if "Data" not in data or "Data" not in data["Data"]:
+        if not isinstance(data, list) or len(data) == 0 or not isinstance(data[0], list):
             return pd.DataFrame(columns=["datetime", "open", "high", "low", "close", "volume"])
         
-        prices = data["Data"]["Data"]
-        ohlc = pd.DataFrame(prices)
-        ohlc["datetime"] = pd.to_datetime(ohlc["time"], unit="s")
-        return ohlc[["datetime", "open", "high", "low", "close", "volumeto"]].rename(columns={"volumeto": "volume"})
+        ohlc = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close", "volume", "close_time", "quote_asset_volume", "trades", "taker_buy_base", "taker_buy_quote", "ignore"])
+        ohlc = ohlc.astype(float)
+        ohlc["datetime"] = pd.to_datetime(ohlc["timestamp"], unit="ms")
+        return ohlc[["datetime", "open", "high", "low", "close", "volume"]]
     except requests.exceptions.RequestException as e:
         st.error(f"Error fetching data for {symbol} ({interval}): {e}")
         return pd.DataFrame(columns=["datetime", "open", "high", "low", "close", "volume"])
@@ -57,10 +53,10 @@ def update_signals(df, a=1, c=10):
 
 # List of coins and timeframes
 coins = ['BTC', 'ETH', 'XRP', 'ADA', 'BNB', 'SOL', 'DOT', 'DOGE', 'MATIC', 'SHIB']
-timeframes = ['hourly', 'daily']
+timeframes = ['1m', '15m', '1h', '1d']
 
 # Streamlit UI
-st.title("Multi-Coin Trading Signals (CryptoCompare API)")
+st.title("Multi-Coin Trading Signals (Binance API)")
 selected_coins = st.multiselect("Select coins to analyze", options=coins, default=['BTC', 'ETH'])
 st.write("Trading signals for selected coins and all timeframes:")
 
