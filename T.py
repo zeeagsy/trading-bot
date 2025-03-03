@@ -8,8 +8,8 @@ from datetime import datetime
 # Cache data fetching to avoid redundant API calls
 @st.cache_data(ttl=60)  # Cache data for 60 seconds
 def fetch_data(symbol, interval, limit=100):
-    url = "https://api.binance.com/api/v3/klines"
-    params = {"symbol": symbol, "interval": interval, "limit": limit}
+    url = f"https://api.coingecko.com/api/v3/coins/{symbol}/market_chart"
+    params = {"vs_currency": "usd", "days": "1", "interval": interval}
     headers = {"User-Agent": "Mozilla/5.0"}
     
     try:
@@ -18,13 +18,17 @@ def fetch_data(symbol, interval, limit=100):
         response.raise_for_status()
         data = response.json()
         
-        if not isinstance(data, list) or len(data) == 0:
+        if "prices" not in data:
             return pd.DataFrame(columns=["datetime", "open", "high", "low", "close", "volume"])
         
-        o, h, l, c, v = zip(*[(float(d[1]), float(d[2]), float(d[3]), float(d[4]), float(d[5])) for d in data])
-        datetime_values = pd.to_datetime([d[0] for d in data], unit="ms")
-
-        return pd.DataFrame({"datetime": datetime_values, "open": o, "high": h, "low": l, "close": c, "volume": v})
+        prices = data["prices"]
+        ohlc = pd.DataFrame(prices, columns=["datetime", "close"])
+        ohlc["datetime"] = pd.to_datetime(ohlc["datetime"], unit="ms")
+        ohlc["open"] = ohlc["close"].shift(1)
+        ohlc["high"] = ohlc["close"].rolling(window=2).max()
+        ohlc["low"] = ohlc["close"].rolling(window=2).min()
+        ohlc["volume"] = np.nan  # Volume not available in CoinGecko API
+        return ohlc.dropna()
     except requests.exceptions.RequestException as e:
         st.error(f"Error fetching data for {symbol} ({interval}): {e}")
         return pd.DataFrame(columns=["datetime", "open", "high", "low", "close", "volume"])
@@ -35,49 +39,29 @@ def update_signals(df, a=1, c=10):
         return "Hold", None, None
 
     df['high-low'] = df['high'] - df['low']
-    df['high-close_prev'] = np.abs(df['high'] - df['close'].shift(1))
-    df['low-close_prev'] = np.abs(df['low'] - df['close'].shift(1))
-    df['tr'] = df[['high-low', 'high-close_prev', 'low-close_prev']].max(axis=1)
-    df['atr'] = df['tr'].rolling(window=c, min_periods=1).mean()
+    df['tr'] = df['high-low'].rolling(window=c, min_periods=1).mean()
+    df['atr'] = df['tr']
     df['nLoss'] = a * df['atr']
-    df['xATRTrailingStop'] = np.nan
-
-    for i in range(1, len(df)):
-        if df['close'].iloc[i] > df['xATRTrailingStop'].iloc[i-1] and df['close'].iloc[i-1] > df['xATRTrailingStop'].iloc[i-1]:
-            df.loc[i, 'xATRTrailingStop'] = max(df['xATRTrailingStop'].iloc[i-1], df['close'].iloc[i] - df['nLoss'].iloc[i])
-        elif df['close'].iloc[i] < df['xATRTrailingStop'].iloc[i-1] and df['close'].iloc[i-1] < df['xATRTrailingStop'].iloc[i-1]:
-            df.loc[i, 'xATRTrailingStop'] = min(df['xATRTrailingStop'].iloc[i-1], df['close'].iloc[i] + df['nLoss'].iloc[i])
-        elif df['close'].iloc[i] > df['xATRTrailingStop'].iloc[i-1]:
-            df.loc[i, 'xATRTrailingStop'] = df['close'].iloc[i] - df['nLoss'].iloc[i]
-        else:
-            df.loc[i, 'xATRTrailingStop'] = df['close'].iloc[i] + df['nLoss'].iloc[i]
-
+    df['xATRTrailingStop'] = df['close'] - df['nLoss']
     df['ema'] = df['close'].ewm(span=1, adjust=False).mean()
-    df['buy'] = (df['close'] > df['xATRTrailingStop']) & (df['ema'] > df['xATRTrailingStop'])
-    df['sell'] = (df['close'] < df['xATRTrailingStop']) & (df['ema'] < df['xATRTrailingStop'])
-    df['signal'] = np.nan
-    df.loc[df['buy'], 'signal'] = 'Buy'
-    df.loc[df['sell'], 'signal'] = 'Sell'
+    df['buy'] = df['close'] > df['xATRTrailingStop']
+    df['sell'] = df['close'] < df['xATRTrailingStop']
+    df['signal'] = np.where(df['buy'], 'Buy', np.where(df['sell'], 'Sell', 'Hold'))
 
     latest_signal = df.iloc[-1]
-    if latest_signal['buy']:
-        return 'Buy', latest_signal['close'], latest_signal['datetime']
-    elif latest_signal['sell']:
-        return 'Sell', latest_signal['close'], latest_signal['datetime']
-    else:
-        return 'Hold', None, latest_signal['datetime']
+    return latest_signal['signal'], latest_signal['close'], latest_signal['datetime']
 
 # List of coins and timeframes
-coins = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'ADAUSDT', 'BNBUSDT', 'SOLUSDT', 'DOTUSDT', 'DOGEUSDT', 'MATICUSDT', 'SHIBUSDT']
-timeframes = ['1m', '15m', '1h', '1d']
+coins = ['bitcoin', 'ethereum', 'ripple', 'cardano', 'binancecoin', 'solana', 'polkadot', 'dogecoin', 'matic-network', 'shiba-inu']
+timeframes = ['hourly', 'daily']
 
 # Streamlit UI
-st.title("Multi-Coin Trading Signals")
-selected_coins = st.multiselect("Select coins to analyze", options=coins, default=['BTCUSDT', 'ETHUSDT'])
+st.title("Multi-Coin Trading Signals (CoinGecko API)")
+selected_coins = st.multiselect("Select coins to analyze", options=coins, default=['bitcoin', 'ethereum'])
 st.write("Trading signals for selected coins and all timeframes:")
 
 for coin in selected_coins:
-    st.subheader(f"Signals for {coin}")
+    st.subheader(f"Signals for {coin.capitalize()}")
     for tf in timeframes:
         df = fetch_data(coin, tf)
         signal, price, timestamp = update_signals(df)
