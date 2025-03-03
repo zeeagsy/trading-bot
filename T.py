@@ -5,42 +5,74 @@ import streamlit as st
 import time
 from datetime import datetime
 
-# Cache data fetching to avoid redundant API calls
+# Binance API Endpoints (Try different ones if blocked)
+BINANCE_API_URLS = [
+    "https://api.binance.com/api/v3/klines",
+    "https://api1.binance.com/api/v3/klines",
+    "https://api2.binance.com/api/v3/klines",
+    "https://api3.binance.com/api/v3/klines"
+]
+
+COINGECKO_API_URL = "https://api.coingecko.com/api/v3/coins/markets"
+
+# Proxy (Use if Binance is blocked)
+PROXIES = {
+    "http": "http://your_proxy_ip:port",
+    "https": "http://your_proxy_ip:port"
+}
+
+# Binance API Key (Optional, if needed)
+BINANCE_API_KEY = None  # Replace with your API key if required
+
 @st.cache_data(ttl=60)  # Cache data for 60 seconds
 def fetch_data(symbol, interval, limit=100):
-    api_endpoints = [
-        "https://api.binance.com/api/v3/klines",
-        "https://api1.binance.com/api/v3/klines",
-        "https://api2.binance.com/api/v3/klines"
-    ]
-
     params = {'symbol': symbol, 'interval': interval, 'limit': limit}
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if BINANCE_API_KEY:
+        headers["X-MBX-APIKEY"] = BINANCE_API_KEY  # Add API key if available
 
-    for url in api_endpoints:
+    # Try Binance first
+    for url in BINANCE_API_URLS:
         try:
-            response = requests.get(url, params=params, headers=headers)
-            response.raise_for_status()  # Raises an HTTPError for bad responses
-
+            response = requests.get(url, params=params, headers=headers, proxies=PROXIES)
+            response.raise_for_status()
             data = response.json()
+
             if not isinstance(data, list) or len(data) == 0:
-                return pd.DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+                raise ValueError("Invalid response format from Binance API")
 
             o, h, l, c, v = zip(*[(float(d[1]), float(d[2]), float(d[3]), float(d[4]), float(d[5])) for d in data])
             datetime_values = pd.to_datetime([d[0] for d in data], unit='ms')
 
             return pd.DataFrame({'datetime': datetime_values, 'open': o, 'high': h, 'low': l, 'close': c, 'volume': v})
 
-        except requests.exceptions.HTTPError as e:
-            st.error(f"HTTP Error {response.status_code} for {symbol} ({interval}): {e}")
         except requests.exceptions.RequestException as e:
-            st.error(f"Request Error for {symbol} ({interval}): {e}")
-        except Exception as e:
-            st.error(f"Unexpected Error: {e}")
+            st.warning(f"Binance API failed: {e}. Trying CoinGecko...")
+            time.sleep(1)  # Avoid rate limiting
 
-        time.sleep(1)  # Wait 1 second before trying next API endpoint
+    # If Binance fails, try CoinGecko
+    try:
+        cg_params = {'vs_currency': 'usd', 'ids': symbol.lower().replace("usdt", ""), 'order': 'market_cap_desc'}
+        response = requests.get(COINGECKO_API_URL, params=cg_params, headers=headers, proxies=PROXIES)
+        response.raise_for_status()
+        data = response.json()
 
-    return pd.DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+        if not data or 'current_price' not in data[0]:
+            raise ValueError("Invalid response format from CoinGecko API")
+
+        df = pd.DataFrame([{
+            'datetime': datetime.now(),
+            'open': data[0]['current_price'],
+            'high': data[0]['high_24h'],
+            'low': data[0]['low_24h'],
+            'close': data[0]['current_price'],
+            'volume': data[0]['total_volume']
+        }])
+        return df
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"Both Binance and CoinGecko failed: {e}")
+        return pd.DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
 
 # Update signals based on new data
 def update_signals(df, a=1, c=10):
@@ -87,7 +119,7 @@ coins = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT', 'ADAUSDT', 'BNBUSDT', 'SOLUSDT', 'DOTU
 timeframes = ['1m', '15m', '1h', '1d']
 
 # Streamlit UI
-st.title("User-Selected Multi-Coin Trading Signals")
+st.title("Multi-Coin Trading Signals (Binance + CoinGecko)")
 selected_coins = st.multiselect("Select coins to analyze", options=coins, default=['BTCUSDT', 'ETHUSDT'])
 st.write("Trading signals for selected coins and all timeframes:")
 
