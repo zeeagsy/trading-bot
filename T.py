@@ -2,42 +2,45 @@ import pandas as pd
 import numpy as np
 import requests
 import streamlit as st
+import time
 from datetime import datetime
 
 # Cache data fetching to avoid redundant API calls
 @st.cache_data(ttl=60)  # Cache data for 60 seconds
 def fetch_data(symbol, interval, limit=100):
-    url = 'https://api.binance.com/api/v3/klines'
-    params = {
-        'symbol': symbol,
-        'interval': interval,
-        'limit': limit
-    }
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    try:
-        response = requests.get(url, params=params, headers=headers)
-        response.raise_for_status()
-        data = response.json()
+    api_endpoints = [
+        "https://api.binance.com/api/v3/klines",
+        "https://api1.binance.com/api/v3/klines",
+        "https://api2.binance.com/api/v3/klines"
+    ]
 
-        if not isinstance(data, list) or len(data) == 0 or not isinstance(data[0], list):
-            return pd.DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+    params = {'symbol': symbol, 'interval': interval, 'limit': limit}
+    headers = {'User-Agent': 'Mozilla/5.0'}
 
-        o, h, l, c, v = zip(*[(float(d[1]), float(d[2]), float(d[3]), float(d[4]), float(d[5])) for d in data])
-        datetime = pd.to_datetime([d[0] for d in data], unit='ms')
+    for url in api_endpoints:
+        try:
+            response = requests.get(url, params=params, headers=headers)
+            response.raise_for_status()  # Raises an HTTPError for bad responses
 
-        return pd.DataFrame({
-            'datetime': datetime,
-            'open': o,
-            'high': h,
-            'low': l,
-            'close': c,
-            'volume': v
-        })
-    except Exception as e:
-        st.error(f"Error fetching data for {symbol} ({interval}): {e}")
-        return pd.DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+            data = response.json()
+            if not isinstance(data, list) or len(data) == 0:
+                return pd.DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
+
+            o, h, l, c, v = zip(*[(float(d[1]), float(d[2]), float(d[3]), float(d[4]), float(d[5])) for d in data])
+            datetime_values = pd.to_datetime([d[0] for d in data], unit='ms')
+
+            return pd.DataFrame({'datetime': datetime_values, 'open': o, 'high': h, 'low': l, 'close': c, 'volume': v})
+
+        except requests.exceptions.HTTPError as e:
+            st.error(f"HTTP Error {response.status_code} for {symbol} ({interval}): {e}")
+        except requests.exceptions.RequestException as e:
+            st.error(f"Request Error for {symbol} ({interval}): {e}")
+        except Exception as e:
+            st.error(f"Unexpected Error: {e}")
+
+        time.sleep(1)  # Wait 1 second before trying next API endpoint
+
+    return pd.DataFrame(columns=['datetime', 'open', 'high', 'low', 'close', 'volume'])
 
 # Update signals based on new data
 def update_signals(df, a=1, c=10):
