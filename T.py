@@ -5,11 +5,19 @@ import streamlit as st
 import time
 from datetime import datetime
 
+# Free CryptoCompare API Key (Replace with your own if needed)
+API_KEY = "your_free_api_key_here"
+
 # Cache data fetching to avoid redundant API calls
 @st.cache_data(ttl=60)  # Cache data for 60 seconds
 def fetch_data(symbol, interval, limit=100):
-    url = f"https://api.coingecko.com/api/v3/coins/{symbol}/market_chart"
-    params = {"vs_currency": "usd", "days": "1", "interval": interval}
+    url = f"https://min-api.cryptocompare.com/data/v2/histominute" if interval == "hourly" else f"https://min-api.cryptocompare.com/data/v2/histoday"
+    params = {
+        "fsym": symbol.upper(),
+        "tsym": "USD",
+        "limit": limit,
+        "api_key": API_KEY
+    }
     headers = {"User-Agent": "Mozilla/5.0"}
     
     try:
@@ -18,17 +26,13 @@ def fetch_data(symbol, interval, limit=100):
         response.raise_for_status()
         data = response.json()
         
-        if "prices" not in data:
+        if "Data" not in data or "Data" not in data["Data"]:
             return pd.DataFrame(columns=["datetime", "open", "high", "low", "close", "volume"])
         
-        prices = data["prices"]
-        ohlc = pd.DataFrame(prices, columns=["datetime", "close"])
-        ohlc["datetime"] = pd.to_datetime(ohlc["datetime"], unit="ms")
-        ohlc["open"] = ohlc["close"].shift(1)
-        ohlc["high"] = ohlc["close"].rolling(window=2).max()
-        ohlc["low"] = ohlc["close"].rolling(window=2).min()
-        ohlc["volume"] = np.nan  # Volume not available in CoinGecko API
-        return ohlc.dropna()
+        prices = data["Data"]["Data"]
+        ohlc = pd.DataFrame(prices)
+        ohlc["datetime"] = pd.to_datetime(ohlc["time"], unit="s")
+        return ohlc[["datetime", "open", "high", "low", "close", "volumeto"]].rename(columns={"volumeto": "volume"})
     except requests.exceptions.RequestException as e:
         st.error(f"Error fetching data for {symbol} ({interval}): {e}")
         return pd.DataFrame(columns=["datetime", "open", "high", "low", "close", "volume"])
@@ -52,16 +56,16 @@ def update_signals(df, a=1, c=10):
     return latest_signal['signal'], latest_signal['close'], latest_signal['datetime']
 
 # List of coins and timeframes
-coins = ['bitcoin', 'ethereum', 'ripple', 'cardano', 'binancecoin', 'solana', 'polkadot', 'dogecoin', 'matic-network', 'shiba-inu']
+coins = ['BTC', 'ETH', 'XRP', 'ADA', 'BNB', 'SOL', 'DOT', 'DOGE', 'MATIC', 'SHIB']
 timeframes = ['hourly', 'daily']
 
 # Streamlit UI
-st.title("Multi-Coin Trading Signals (CoinGecko API)")
-selected_coins = st.multiselect("Select coins to analyze", options=coins, default=['bitcoin', 'ethereum'])
+st.title("Multi-Coin Trading Signals (CryptoCompare API)")
+selected_coins = st.multiselect("Select coins to analyze", options=coins, default=['BTC', 'ETH'])
 st.write("Trading signals for selected coins and all timeframes:")
 
 for coin in selected_coins:
-    st.subheader(f"Signals for {coin.capitalize()}")
+    st.subheader(f"Signals for {coin}")
     for tf in timeframes:
         df = fetch_data(coin, tf)
         signal, price, timestamp = update_signals(df)
