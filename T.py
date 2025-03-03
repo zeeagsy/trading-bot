@@ -1,10 +1,11 @@
 import pandas as pd
 import numpy as np
 import requests
-import time
 import streamlit as st
+from datetime import datetime
 
-# Fetch data from Binance API
+# Cache data fetching to avoid redundant API calls
+@st.cache_data(ttl=60)  # Cache data for 60 seconds
 def fetch_data(symbol, interval, limit=100):
     url = 'https://api.binance.com/api/v3/klines'
     params = {
@@ -12,8 +13,11 @@ def fetch_data(symbol, interval, limit=100):
         'interval': interval,
         'limit': limit
     }
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, headers=headers)
         response.raise_for_status()
         data = response.json()
 
@@ -84,19 +88,14 @@ st.title("User-Selected Multi-Coin Trading Signals")
 selected_coins = st.multiselect("Select coins to analyze", options=coins, default=['BTCUSDT', 'ETHUSDT'])
 st.write("Trading signals for selected coins and all timeframes:")
 
-while True:
-    # Display data for each selected coin and timeframe
-    for coin in selected_coins:
-        st.subheader(f"Signals for {coin}")
-        for tf in timeframes:
-            df = fetch_data(coin, tf)
-            signal, price, timestamp = update_signals(df)
+# Display data for each selected coin and timeframe
+for coin in selected_coins:
+    st.subheader(f"Signals for {coin}")
+    for tf in timeframes:
+        df = fetch_data(coin, tf)
+        signal, price, timestamp = update_signals(df)
 
-            if signal and price:
-                st.write(f"Timeframe: {tf} | Signal: {signal} | Price: {price} | Time: {timestamp}")
-            else:
-                st.write(f"Timeframe: {tf} | No signal.")
-    
-    # Wait for 60 seconds and refresh the app
-    time.sleep(60)
-    
+        if signal and price:
+            st.write(f"Timeframe: {tf} | Signal: {signal} | Price: {price} | Time: {timestamp}")
+        else:
+            st.write(f"Timeframe: {tf} | No signal.")
